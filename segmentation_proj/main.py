@@ -1,73 +1,94 @@
 import cv2
 import numpy as np
-from ultralytics import YOLO
+import matplotlib.pyplot as plt
 
-# Load YOLOv8 model (you can use v5 too with a custom loader)
-model = YOLO("yolov8n.pt")  # Lightweight model
-
-# Define HSV bounds for rot detection (tune if needed)
-lower = np.array([10, 50, 20])
-upper = np.array([30, 255, 255])
+# === PARAMETERS ===
+lower = np.array([10, 50, 20])    # HSV lower bound for affected areas
+upper = np.array([30, 255, 255])  # HSV upper bound
 kernel = np.ones((5, 5), np.uint8)
 
-# Start webcam
-cap = cv2.VideoCapture(0)
-if not cap.isOpened():
-    print("❌ Cannot access webcam.")
-    exit()
+# === STATIC IMAGE ANALYSIS (Leaf disease detection) ===
+def analyze_leaf_image(image_path):
+    img = cv2.imread(image_path)
+    if img is None:
+        print(f"❌ Image not found at: {image_path}")
+        return
 
-print("✅ Webcam running... Close the window or press 'q' to exit.")
+    img = cv2.resize(img, (400, 400))
+    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    img_hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
 
-while True:
-    ret, frame = cap.read()
-    if not ret:
-        break
+    mask = cv2.inRange(img_hsv, lower, upper)
+    mask_cleaned = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+    mask_cleaned = cv2.morphologyEx(mask_cleaned, cv2.MORPH_CLOSE, kernel)
 
-    frame = cv2.resize(frame, (640, 480))
-    results = model(frame)[0]
-    frame_copy = frame.copy()
-    detected_count = 0
+    result = img_rgb.copy()
+    result[mask_cleaned > 0] = (255, 0, 0)  # highlight affected in red
 
-    for r in results.boxes:
-        cls = int(r.cls[0])
-        label = model.names[cls]
+    total_pixels = mask_cleaned.size
+    affected_pixels = np.count_nonzero(mask_cleaned)
+    affected_percent = (affected_pixels / total_pixels) * 100
 
-        # Filter for fruits or leaves only
-        if label.lower() in ["apple", "banana", "orange", "leaf"]:
-            x1, y1, x2, y2 = map(int, r.xyxy[0])
-            roi = frame[y1:y2, x1:x2]
+    # Display results using matplotlib
+    fig, axs = plt.subplots(1, 4, figsize=(18, 5))
+    axs[0].imshow(img_rgb)
+    axs[0].set_title("Original Leaf")
+    axs[1].imshow(mask, cmap='gray')
+    axs[1].set_title("Initial Segmentation")
+    axs[2].imshow(mask_cleaned, cmap='gray')
+    axs[2].set_title("Cleaned Mask")
+    axs[3].imshow(result)
+    axs[3].set_title(f"Result: {affected_percent:.2f}% Affected")
+    for ax in axs:
+        ax.axis('off')
+    plt.tight_layout()
+    plt.show()
 
-            # Detect rot in ROI
-            hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
-            mask = cv2.inRange(hsv, lower, upper)
-            mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-            mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+# === REAL-TIME DETECTION USING WEBCAM ===
+def run_realtime_detection():
+    cap = cv2.VideoCapture(0)
 
-            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            for cnt in contours:
-                if cv2.contourArea(cnt) > 200:
-                    dx, dy, dw, dh = cv2.boundingRect(cnt)
-                    cv2.rectangle(roi, (dx, dy), (dx + dw, dy + dh), (0, 0, 255), 2)
-                    detected_count += 1
+    if not cap.isOpened():
+        print("❌ Could not open webcam.")
+        return
 
-            cv2.rectangle(frame_copy, (x1, y1), (x2, y2), (0, 255, 0), 2)
-            cv2.putText(frame_copy, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX,
-                        0.6, (255, 255, 255), 2)
+    print("🎥 Real-time detection started. Press 'q' to quit.")
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            print("❌ Failed to grab frame.")
+            break
 
-    # Display total count
-    cv2.putText(frame_copy, f"Rotten spots: {detected_count}", (10, 30),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+        frame_resized = cv2.resize(frame, (400, 400))
+        hsv = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2HSV)
+        mask = cv2.inRange(hsv, lower, upper)
+        cleaned = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+        cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_CLOSE, kernel)
 
-    # Show the frame
-    cv2.imshow("Rotten Detection (Close window to stop)", frame_copy)
+        result = frame_resized.copy()
+        result[cleaned > 0] = (0, 0, 255)  # affected areas in red
 
-    # Stop if 'q' is pressed or window is closed
-    if cv2.getWindowProperty("Rotten Detection (Close window to stop)", cv2.WND_PROP_VISIBLE) < 1:
-        break
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-        break
+        cv2.imshow("Leaf Disease Detection", result)
 
-# Cleanup
-cap.release()
-cv2.destroyAllWindows()
-print("👋 Webcam closed and cleaned up.")
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
+    cap.release()
+    cv2.destroyAllWindows()
+
+# === MAIN LOGIC ===
+def main():
+    print("Select mode:\n1 - Analyze a leaf image\n2 - Real-time webcam detection")
+    choice = input("Enter your choice (1 or 2): ")
+
+    if choice.strip() == '1':
+        image_path = input("📁 Enter the full path to the leaf image: ").strip()
+        analyze_leaf_image(image_path)
+    elif choice.strip() == '2':
+        run_realtime_detection()
+    else:
+        print("❌ Invalid choice. Please run the script again and enter 1 or 2.")
+
+# === Run it ===
+if __name__ == "__main__":
+    main()
