@@ -53,7 +53,7 @@ In agriculture, timely detection of diseases in leaves is crucial to prevent cro
 
 ---
 
-## 🖼Sample Results
+## Sample Results
 
 ---
 ![Screenshot 2025-05-05 141627](https://github.com/user-attachments/assets/fe205c66-99ee-41fa-aac6-d7f69c4695db)
